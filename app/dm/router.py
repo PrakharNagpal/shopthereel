@@ -93,15 +93,7 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
     elif kind == "BUY":
         state.update_user(uid, pending_product_id=rest, pending_option_ids="[]")
         await remember_product_name(uid, rest)
-        url = await service.ensure_enrollment(uid)
-        if url:
-            await send_url_button(
-                uid, "First, add a card securely with Reap. I never see your card details.",
-                "Add card", url,
-            )
-            await send_text(uid, "Once you are done, tap Buy on the product again.")
-            return
-        await next_step(uid)
+        await card_gate(uid)
     elif kind == "OPT":
         product_id, _, option_id = rest.partition(":")
         picked = json.loads(state.get_user(uid).get("pending_option_ids") or "[]")
@@ -124,6 +116,8 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
                 order.approval_url,
             )
         spawn(service.watch_checkout(uid, order.checkout_id))
+    elif kind == "NEWCARD":
+        await card_gate(uid, new_link=True)
     elif kind == "SKIP":
         await send_text(uid, "No problem. Share another reel any time.")
     elif kind == "CANCEL":
@@ -132,6 +126,63 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
             pending_quote_id=None, pending_variant_id=None,
         )
         await send_text(uid, "Cancelled. Nothing was charged.")
+
+
+_watching: set[str] = set()   # enrollment ids that have a card-verification watcher running
+
+
+async def card_gate(uid: str, new_link: bool = False) -> None:
+    """Continue the purchase if a card is ready, otherwise get one set up without dead ends."""
+    st = await service.enrollment_state(uid)
+    if st == "ACTIVE":
+        await next_step(uid)
+        return
+    if st == "PENDING" and not new_link:
+        await send_quick_replies(
+            uid,
+            "Reap is still verifying your card, which can take a few minutes. "
+            "I will carry on with your order as soon as it is ready.",
+            [("Send a new link", "NEWCARD")],
+        )
+    else:
+        url = await service.ensure_enrollment(uid)
+        if url is None:  # became active in the meantime
+            await next_step(uid)
+            return
+        await send_url_button(
+            uid, "First, add a card securely with Reap. I never see your card details.",
+            "Add card", url,
+        )
+        await send_text(uid, "When you are done I will continue automatically.")
+    eid = state.get_user(uid).get("enrollment_id")
+    if eid and eid not in _watching:
+        _watching.add(eid)
+        spawn(watch_enrollment(uid, eid))
+
+
+async def watch_enrollment(uid: str, eid: str, timeout_s: int = 1200) -> None:
+    """Poll one enrollment; when Reap activates the card, resume the user's pending order."""
+    try:
+        for _ in range(timeout_s // 5):
+            await asyncio.sleep(5)
+            if state.get_user(uid).get("enrollment_id") != eid:
+                return  # replaced by a newer link, whose own gate will watch it
+            try:
+                status = (await service.client().get_enrollment(eid)).get("status")
+            except ReapError:
+                continue
+            if status == "ACTIVE":
+                await send_text(uid, "Your card is ready. Carrying on with your order.")
+                try:
+                    await next_step(uid)
+                except ReapError as e:
+                    await send_text(uid, service.friendly_error(e))
+                return
+            if status in ("FAILED", "EXPIRED", "REVOKED"):
+                await send_text(uid, "Card setup did not complete. Tap Buy again to get a new link.")
+                return
+    finally:
+        _watching.discard(eid)
 
 
 async def remember_product_name(uid: str, product_id: str) -> None:

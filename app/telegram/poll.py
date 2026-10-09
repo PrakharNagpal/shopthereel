@@ -6,6 +6,7 @@ from app.config import settings
 from app.dm.router import handle_events
 from app.telegram.api import TelegramError, call
 from app.telegram.parse import parse_update
+from app.telegram.send import show_card
 
 log = logging.getLogger("telegram")
 
@@ -35,12 +36,24 @@ async def _ack(u: dict, ev) -> None:
         pass  # message too old to edit, or already answered
 
 
+async def _carousel_nav(cb: dict, cid: str) -> None:
+    try:
+        await call("answerCallbackQuery", callback_query_id=cb["id"])
+        await show_card(cid, cb["message"]["message_id"], int(cb["data"][4:]))
+    except (TelegramError, ValueError):
+        pass  # stale message or double tap
+
+
 async def handle_update(u: dict) -> None:
     ev = parse_update(u)
     chat = (u.get("message") or (u.get("callback_query") or {}).get("message") or {}).get("chat", {})
     cid = str(chat.get("id", ""))
     if cid and not _allowed(cid):
         log.warning("ignored message from chat id %s (not in TELEGRAM_ALLOWED_CHAT_IDS)", cid)
+        return
+    cb = u.get("callback_query")
+    if cb and (cb.get("data") or "").startswith("nav:") and cid:
+        await _carousel_nav(cb, cid)
         return
     await _ack(u, ev)
     if ev is None:

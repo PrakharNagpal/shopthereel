@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Optional
 
@@ -31,23 +32,41 @@ def _money(v) -> float:
 
 # ---------- enrollment ----------
 
-async def ensure_enrollment(user_id: str) -> str | None:
-    """Returns hosted card-entry URL if user not enrolled, else None."""
-    c = client()
+PENDING_WINDOW_MIN = 20  # Reap can take many minutes to mark a freshly entered card ACTIVE
+
+
+async def enrollment_state(user_id: str) -> str:
+    """ACTIVE: ready to pay. PENDING: a link was sent recently and Reap is still verifying.
+    NEEDS_LINK: no enrollment, or it failed/expired/was never completed."""
     if settings.demo_enrollment_id:  # demo mode: everyone buys with the pre-enrolled card
         state.update_user(user_id, enrollment_id=settings.demo_enrollment_id)
+        return "ACTIVE"
+    u = state.get_user(user_id)
+    if not u.get("enrollment_id"):
+        return "NEEDS_LINK"
+    status = (await client().get_enrollment(u["enrollment_id"])).get("status")
+    if status == "ACTIVE":
+        return "ACTIVE"
+    sent = u.get("enrollment_link_sent_at")
+    if status == "REQUIRES_ACTION" and sent:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(sent)
+        if age < timedelta(minutes=PENDING_WINDOW_MIN):
+            return "PENDING"
+    return "NEEDS_LINK"
+
+
+async def ensure_enrollment(user_id: str) -> str | None:
+    """Returns a NEW hosted card-entry URL if the user has no active card, else None.
+
+    Card links are single use ("session already used"), so an old link is never handed out again.
+    """
+    if await enrollment_state(user_id) == "ACTIVE":
         return None
-    eid = state.get_user(user_id).get("enrollment_id")
-    if eid:
-        cur = await c.get_enrollment(eid)
-        if cur.get("status") == "ACTIVE":
-            return None
-        url = _enrollment_url(cur)
-        if url:
-            return url
-    enr = await c.create_enrollment(user_id)
-    state.update_user(user_id, enrollment_id=enr.get("id"))
-    # Hosted URL field name is unverified; check the first real response.
+    enr = await client().create_enrollment(user_id)
+    state.update_user(
+        user_id, enrollment_id=enr.get("id"),
+        enrollment_link_sent_at=datetime.now(timezone.utc).isoformat(),
+    )
     url = _enrollment_url(enr)
     if not url:
         log.error("enrollment response had no URL; keys=%s", list(enr))

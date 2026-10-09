@@ -17,6 +17,7 @@ USER_COLUMNS = (
     "awaiting",
     "pending_quote_amount",
     "pending_product_name",
+    "enrollment_link_sent_at",
     "shipping_json",
     "pending_product_id",
     "pending_option_ids",
@@ -33,6 +34,7 @@ NEW_COLUMNS = (
     ("awaiting", "TEXT"),
     ("pending_quote_amount", "REAL"),
     ("pending_product_name", "TEXT"),
+    ("enrollment_link_sent_at", "TEXT"),
 )
 
 SCHEMA = """
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS users (
     awaiting TEXT,
     pending_quote_amount REAL,
     pending_product_name TEXT,
+    enrollment_link_sent_at TEXT,
     shipping_json TEXT,
     pending_product_id TEXT,
     pending_option_ids TEXT,
