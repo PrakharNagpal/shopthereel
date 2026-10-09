@@ -5,13 +5,14 @@ import re
 from app import state
 from app.agent.recognize import recognize
 from app.agent.rerank import rerank
-from app.models import MediaBundle, ProductCandidate, RecognitionResult
+from app.models import DetectedProduct, MediaBundle, ProductCandidate, RecognitionResult
 from app.purchase.budget import get_budget
 from app.purchase.service import client
 
 log = logging.getLogger("agent")
 
 MIN_SCORE = 0.35  # below this a candidate is a different kind of product
+MAX_RESULTS = 8   # carousel cards shown; Instagram allows up to 10
 
 
 def _to_candidate(p: dict) -> ProductCandidate:
@@ -40,9 +41,25 @@ def _verified(c: ProductCandidate, brand: str | None, model_tokens: list[str]) -
     return bool((brand and brand.lower() in name) or any(t in name for t in model_tokens))
 
 
-async def gather_candidates(
-    queries: list[str], max_price: float | None = None
-) -> list[tuple[int, ProductCandidate]]:
+def assign_badges(scored: list[tuple[ProductCandidate, float]]) -> None:
+    """Label up to three cards: Best match (top score), Best value, Cheapest close match."""
+    if not scored:
+        return
+    top, top_score = scored[0]
+    top.badge = "Best match"
+    close = [(c, sc) for c, sc in scored[1:] if sc >= max(top_score - 0.3, MIN_SCORE)]
+    # Best value: strongest score per dollar among close matches that cost less than the top pick.
+    cheaper = [(c, sc) for c, sc in close if c.price_min < top.price_min]
+    if cheaper:
+        value, _ = max(cheaper, key=lambda x: x[1] / max(x[0].price_min, 1))
+        value.badge = "Best value"
+    # Cheapest close match: only if it is not the top pick and not already labelled.
+    cheapest = min([(top, top_score)] + close, key=lambda x: x[0].price_min)[0]
+    if cheapest is not top and not cheapest.badge:
+        cheapest.badge = "Cheapest close match"
+
+
+async def gather_candidates(queries: list[str]) -> list[tuple[int, ProductCandidate]]:
     """Search every query concurrently and pool the results (deduped), tagged by query index."""
     c = client()
     results = list(await asyncio.gather(
@@ -65,46 +82,64 @@ async def gather_candidates(
         for p in res.get("products", []):
             if not p.get("available", True) or p["id"] in pooled:
                 continue
-            cand = _to_candidate(p)
-            if max_price is None or cand.price_min <= max_price:
-                pooled[p["id"]] = (i, cand)
+            pooled[p["id"]] = (i, _to_candidate(p))
     return list(pooled.values())
 
 
+def _apply_budget(
+    ranked: list[tuple[ProductCandidate, float]], budget: tuple[float, str] | None
+) -> tuple[list[tuple[ProductCandidate, float]], str | None]:
+    """Keep what fits the budget; explain when the closest look-alike does not."""
+    if not budget or not ranked:
+        return ranked, None
+    limit, cur = budget
+    best = ranked[0][0]
+    affordable = [(c, sc) for c, sc in ranked if c.price_min <= limit]
+    note = None
+    if best.price_min > limit and affordable:
+        note = (
+            f"The closest match ({best.name[:50]}) is {cur} {best.price_min:g}, over your "
+            f"{cur} {limit:g} limit. Here are the best ones within budget."
+        )
+    return affordable, note
+
+
 async def recognize_and_search(bundle: MediaBundle, user_id: str | None = None) -> RecognitionResult:
-    # Skip the cache when the user gave a hint, since the hint can change the target item.
-    if not bundle.user_hint:
-        cached = state.get_recognition(bundle.reel_id)
-        if cached:
-            return RecognitionResult.model_validate(cached)
+    """Recognise, search, rank visually. The cache holds the budget-independent ranking;
+    each user's budget, badges and note are applied fresh on every call."""
+    cached = None if bundle.user_hint else state.get_recognition(bundle.reel_id)
+    if cached and "ranked" in cached:
+        detected = DetectedProduct.model_validate(cached["detected"])
+        ranked = [(ProductCandidate.model_validate(r["c"]), r["s"]) for r in cached["ranked"]]
+        first_query = {k: v for k, v in cached["first_query"].items()}
+    else:
+        detected = await recognize(bundle)
+        pooled = await gather_candidates(detected.queries)
+        first_query = {c.product_id: i for i, c in pooled}
+        frame = bundle.frames_b64[detected.best_frame] if bundle.frames_b64 else ""
+        desc = f"{detected.name}; " + ", ".join(detected.attributes)
+        ranked = [(c, sc) for c, sc in await rerank(frame, desc, [c for _, c in pooled]) if sc >= MIN_SCORE]
+        if not bundle.user_hint:
+            state.save_recognition(bundle.reel_id, {
+                "detected": detected.model_dump(),
+                "ranked": [{"c": c.model_dump(), "s": sc} for c, sc in ranked],
+                "first_query": first_query,
+            })
 
-    detected = await recognize(bundle)
-    budget = get_budget(user_id) if user_id else None
-    pooled = await gather_candidates(detected.queries, budget[0] if budget else None)
-    cands = [c for _, c in pooled]
-    first_query = {c.product_id: i for i, c in pooled}
-
-    frame = bundle.frames_b64[detected.best_frame] if bundle.frames_b64 else ""
-    desc = f"{detected.name}; " + ", ".join(detected.attributes)
-    ranked = await rerank(frame, desc, cands)
-
+    ranked, note = _apply_budget(ranked, get_budget(user_id) if user_id else None)
+    ranked = ranked[:MAX_RESULTS]
+    assign_badges(ranked)
     tokens = _model_tokens(detected.name)
-    verified = [c for c, _ in ranked if _verified(c, detected.brand, tokens)]
-    top = [c for c, score in ranked if score >= MIN_SCORE][:3]
-    # "exact" is earned: a candidate carries the detected brand or model number.
-    exact = [c for c in verified if c in top] or [c for c in verified[:1] if ranked and ranked[0][0] == c]
+    top = [c for c, _ in ranked]
+    exact = [c for c in top if _verified(c, detected.brand, tokens)]
     if not top:
         match, used, final = "none", None, []
     elif exact:
         match, final = "exact", exact + [c for c in top if c not in exact]
-        used = detected.queries[first_query[exact[0].product_id]]
-        final = final[:3]
+        used = detected.queries[first_query.get(exact[0].product_id, 0)]
     else:
         match, final = "similar", top
-        used = detected.queries[first_query[top[0].product_id]]
-    result = RecognitionResult(
-        detected=detected, match_type=match, query_used=used, candidates=final
+        used = detected.queries[first_query.get(top[0].product_id, 0)]
+    return RecognitionResult(
+        detected=detected, match_type=match, query_used=used, candidates=final, note=note
     )
-    if not bundle.user_hint:
-        state.save_recognition(bundle.reel_id, result.model_dump())
-    return result

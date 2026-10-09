@@ -23,14 +23,18 @@ async def send_text(igsid: str, text: str) -> None:
     await _send({"recipient": {"id": igsid}, "message": {"text": text}})
 
 
-async def send_carousel(igsid: str, result) -> None:
-    """RecognitionResult -> generic template with a Buy button per candidate."""
+async def send_cards(igsid: str, candidates) -> None:
+    """Generic-template carousel (max 10 cards) with a Buy button per product."""
     elements = []
-    for c in result.candidates[:10]:
+    for c in candidates[:10]:
         price = f"{c.price_min:g}" if c.price_min == c.price_max else f"{c.price_min:g}-{c.price_max:g}"
+        tail = f"{c.currency} {price}"
+        head = f"{c.badge} | " if getattr(c, "badge", None) else ""
+        room = 80 - len(head) - len(tail) - 3
+        sub = f"{head}{c.merchant[:max(room, 0)].rstrip()} | {tail}"
         el = {
             "title": c.name[:80],
-            "subtitle": f"{c.merchant} | {c.currency} {price}"[:80],
+            "subtitle": sub[:80],
             "buttons": [{"type": "postback", "title": "Buy", "payload": f"BUY:{c.product_id}"}],
         }
         if c.image_url:
@@ -47,6 +51,11 @@ async def send_carousel(igsid: str, result) -> None:
             },
         }
     )
+
+
+async def send_carousel(igsid: str, result) -> None:
+    """RecognitionResult -> carousel."""
+    await send_cards(igsid, result.candidates)
 
 
 async def send_quick_replies(igsid: str, text: str, options: list[tuple[str, str]]) -> None:

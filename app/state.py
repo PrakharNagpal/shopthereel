@@ -10,6 +10,13 @@ USER_COLUMNS = (
     "enrollment_id",
     "budget_per_order",
     "budget_currency",
+    "budget_monthly",
+    "max_orders_per_day",
+    "confirm_above",
+    "buying_paused",
+    "awaiting",
+    "pending_quote_amount",
+    "pending_product_name",
     "shipping_json",
     "pending_product_id",
     "pending_option_ids",
@@ -18,12 +25,29 @@ USER_COLUMNS = (
     "pending_checkout_id",
 )
 
+NEW_COLUMNS = (
+    ("budget_monthly", "REAL"),
+    ("max_orders_per_day", "INTEGER"),
+    ("confirm_above", "REAL"),
+    ("buying_paused", "INTEGER"),
+    ("awaiting", "TEXT"),
+    ("pending_quote_amount", "REAL"),
+    ("pending_product_name", "TEXT"),
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     igsid TEXT PRIMARY KEY,
     enrollment_id TEXT,
     budget_per_order REAL,
     budget_currency TEXT,
+    budget_monthly REAL,
+    max_orders_per_day INTEGER,
+    confirm_above REAL,
+    buying_paused INTEGER,
+    awaiting TEXT,
+    pending_quote_amount REAL,
+    pending_product_name TEXT,
     shipping_json TEXT,
     pending_product_id TEXT,
     pending_option_ids TEXT,
@@ -46,6 +70,11 @@ def _db() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    for col, typ in NEW_COLUMNS:  # bring older DB files up to date
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     try:
         yield conn
         conn.commit()
@@ -105,3 +134,23 @@ def first_time_seen(mid: str) -> bool:
     with _db() as c:
         cur = c.execute("INSERT OR IGNORE INTO seen_messages VALUES (?)", (mid,))
         return cur.rowcount == 1
+
+
+def month_spent(igsid: str) -> float:
+    """Total of this user's completed orders since the start of the current UTC month."""
+    start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+    with _db() as c:
+        row = c.execute(
+            "SELECT COALESCE(SUM(final_amount), 0) FROM orders WHERE igsid=? AND created_at>=?",
+            (igsid, start),
+        ).fetchone()
+    return float(row[0])
+
+
+def orders_today(igsid: str) -> int:
+    start = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _db() as c:
+        row = c.execute(
+            "SELECT COUNT(*) FROM orders WHERE igsid=? AND created_at>=?", (igsid, start)
+        ).fetchone()
+    return int(row[0])

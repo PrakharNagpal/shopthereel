@@ -115,7 +115,9 @@ async def create_quote(user_id: str, variant_id: str) -> QuoteSummary:
     final = _money(ab["finalAmount"])
     currency = (ab["finalAmount"] or {}).get("currency") or settings.reap_default_currency
     ok, msg = check_budget(user_id, final, currency)
-    state.update_user(user_id, pending_variant_id=variant_id, pending_quote_id=q["id"])
+    state.update_user(
+        user_id, pending_variant_id=variant_id, pending_quote_id=q["id"], pending_quote_amount=final
+    )
     return QuoteSummary(
         quote_id=q["id"],
         items_subtotal=_money(ab["itemsSubtotal"]),
@@ -195,6 +197,7 @@ async def watch_checkout(igsid: str, checkout_id: str, timeout_s: int = 120) -> 
                     f"Ordered! Order #{order.order_id}, "
                     f"{order.currency} {order.final_amount} charged.",
                 )
+                await suggest_after_order(igsid)
             else:
                 await send_text(
                     igsid, "The payment did not go through, so nothing was charged. Try again?"
@@ -205,11 +208,47 @@ async def watch_checkout(igsid: str, checkout_id: str, timeout_s: int = 120) -> 
     await send_text(igsid, "I did not see the payment finish. If you approved it, check your email.")
 
 
+async def suggest_after_order(igsid: str) -> None:
+    """Offer add-ons after a completed order. Best effort: never raises."""
+    try:
+        from app.agent.recommend import suggest_addons
+        from app.meta.send import send_cards, send_quick_replies
+        from app.purchase.budget import get_budget
+
+        u = state.get_user(igsid)
+        name = u.get("pending_product_name")
+        if not name:
+            return
+        # Add-ons should stay small next to the main purchase, and inside the user's budget.
+        caps = [0.6 * u["pending_quote_amount"]] if u.get("pending_quote_amount") else []
+        budget = get_budget(igsid)
+        if budget:
+            caps.append(budget[0])
+        cands = await suggest_addons(
+            name, u.get("pending_product_id"), min(caps) if caps else None
+        )
+        if not cands:
+            return
+        await send_text_safe(igsid, f"Goes well with your {name[:40]}:")
+        await send_cards(igsid, cands)
+        await send_quick_replies(igsid, "Want any of these?", [("No thanks", "SKIP")])
+    except Exception:
+        log.exception("add-on suggestion failed")
+
+
+async def send_text_safe(igsid: str, text: str) -> None:
+    from app.meta.send import send_text
+
+    await send_text(igsid, text)
+
+
 def friendly_error(e: ReapError) -> str:
     if e.code == "CARD_PAYMENT_UNAVAILABLE":
         return "This merchant cannot take your card right now. Try another product."
     if e.code == "QUOTE_UNFULFILLABLE":
         return "That item cannot be delivered right now. Try another one."
+    if e.code in ("AGENTIC_SERVICE_UNAVAILABLE", "CHECKOUT_TEMPORARILY_UNAVAILABLE"):
+        return "The store service is busy right now. Please tap Buy again in a few seconds."
     if e.code == "OVER_BUDGET":
         return e.message
     if e.code in ("STALE_QUOTE", "NOT_ENROLLED", "ENROLLMENT_NOT_ACTIVE"):

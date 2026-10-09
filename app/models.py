@@ -31,12 +31,14 @@ class ProductCandidate(BaseModel):
     price_max: float
     currency: str
     default_variant_id: Optional[str] = None
+    badge: Optional[str] = None          # e.g. "Best match", "Best value"
 
 class RecognitionResult(BaseModel):
     detected: DetectedProduct
     match_type: Literal["exact", "similar", "none"]
     query_used: Optional[str] = None
-    candidates: list[ProductCandidate]   # top 3
+    candidates: list[ProductCandidate]   # ranked best first, up to 8
+    note: Optional[str] = None           # extra line shown before the cards, e.g. budget hint
 
 class VariantOption(BaseModel):
     group: str                      # "Size", "Color"

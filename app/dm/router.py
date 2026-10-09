@@ -5,10 +5,11 @@ import logging
 from app import state
 from app.agent.search import recognize_and_search
 from app.dm import render
+from app.dm import settings as rules_menu
 from app.media.pipeline import bundle_from_url
 from app.meta.parse import InboundEvent, parse_events
 from app.meta.send import send_quick_replies, send_text, send_url_button
-from app.purchase import service
+from app.purchase import policy, service
 from app.purchase.budget import handle_budget_command
 from app.reap.client import ReapError
 
@@ -31,6 +32,7 @@ async def handle_payload(body: dict) -> None:
         try:
             await dispatch(ev)
         except ReapError as e:
+            log.warning("reap error: %s", e)
             await send_text(ev.igsid, service.friendly_error(e))
         except Exception:
             log.exception("handler failed")
@@ -64,6 +66,8 @@ async def process_reel(ev: InboundEvent, hint: str | None) -> None:
 
 async def handle_text(ev: InboundEvent) -> None:
     text = (ev.text or "").strip()
+    if await rules_menu.handle_text(ev.igsid, text):
+        return
     reply = handle_budget_command(ev.igsid, text)
     if reply:
         await send_text(ev.igsid, reply)
@@ -79,8 +83,11 @@ async def handle_text(ev: InboundEvent) -> None:
 async def handle_payload_tap(ev: InboundEvent) -> None:
     kind, _, rest = (ev.payload or "").partition(":")
     uid = ev.igsid
-    if kind == "BUY":
+    if kind in ("SET", "SETVAL"):
+        await rules_menu.handle_tap(uid, ev.payload)
+    elif kind == "BUY":
         state.update_user(uid, pending_product_id=rest, pending_option_ids="[]")
+        await remember_product_name(uid, rest)
         url = await service.ensure_enrollment(uid)
         if url:
             await send_url_button(
@@ -95,7 +102,16 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
         picked = json.loads(state.get_user(uid).get("pending_option_ids") or "[]")
         state.update_user(uid, pending_option_ids=json.dumps(picked + [option_id]))
         await next_step(uid)
-    elif kind == "CONFIRM":
+    elif kind in ("CONFIRM", "CONFIRMX"):
+        u = state.get_user(uid)
+        amount = u.get("pending_quote_amount") or 0
+        # Large orders need a second, explicit tap (CONFIRMX) before any checkout is created.
+        if kind == "CONFIRM" and policy.needs_extra_confirm(uid, amount):
+            await send_quick_replies(
+                uid, f"This is a large order: {amount:.2f}. Are you sure you want to buy it?",
+                [("Yes, buy it", f"CONFIRMX:{rest}"), ("Cancel", "CANCEL")],
+            )
+            return
         order = await service.start_checkout(uid, rest)
         if order.approval_url:
             await send_url_button(
@@ -103,12 +119,23 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
                 order.approval_url,
             )
         spawn(service.watch_checkout(uid, order.checkout_id))
+    elif kind == "SKIP":
+        await send_text(uid, "No problem. Share another reel any time.")
     elif kind == "CANCEL":
         state.update_user(
             uid, pending_product_id=None, pending_option_ids=None,
             pending_quote_id=None, pending_variant_id=None,
         )
         await send_text(uid, "Cancelled. Nothing was charged.")
+
+
+async def remember_product_name(uid: str, product_id: str) -> None:
+    """Needed later for add-on suggestions. A failure here must never block the purchase."""
+    try:
+        det = await service.client().product_details([product_id])
+        state.update_user(uid, pending_product_name=det["products"][0]["name"])
+    except Exception:
+        log.warning("could not look up product name")
 
 
 async def next_step(uid: str) -> None:
