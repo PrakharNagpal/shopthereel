@@ -12,9 +12,18 @@ Evidence priority for brand and model:
 2. Brand or product named in the speech transcript
 3. Logos or text clearly visible in the frames
 If none of these, set brand to null and brand_source to "none". Never guess a brand.
+A brand read only from a logo or packaging is tentative: logos are often small or stylised and easy
+to misread. Use visible_logo only when you can read the letters clearly; if you are unsure of the
+spelling, set brand to null and brand_source to "none" and rely on the model number and description.
+Model numbers and printed product names on packaging or the device are more reliable than brand
+logos. Always copy them exactly (for example "J236" or "WH-1000XM5").
+The transcript may be background music lyrics, not speech about the product. Ignore it unless it
+clearly talks about the product.
 
 Write exactly 3 search queries for an e-commerce catalog, from most to least specific:
-1. specific: brand + model/product name + key attribute (if brand unknown, the most precise description possible)
+1. specific: brand (only if confident) + model number or product name + product type. If a model
+   number is visible but the brand is uncertain, use the model number + product type, no brand.
+   If neither is known, the most precise description possible.
 2. descriptive: no brand, 3-5 key visual attributes + product type
 3. broad: product type only, 1-3 words
 

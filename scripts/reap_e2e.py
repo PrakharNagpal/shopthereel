@@ -38,7 +38,7 @@ def first(data: dict, *names):
 async def ensure_enrollment(c: ReapClient, enrollment_id: str | None) -> str:
     if enrollment_id:
         return enrollment_id
-    enr = await c.create_enrollment()
+    enr = await c.create_enrollment("e2e-prakhar")
     show("enrollment", enr)
     eid = enr.get("id") or enr.get("data", {}).get("id")
     url = enr.get("url") or enr.get("nextAction", {}).get("url") or enr.get("hostedUrl")

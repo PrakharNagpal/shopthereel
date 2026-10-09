@@ -38,6 +38,7 @@ async def recognize(bundle: MediaBundle) -> DetectedProduct:
     """One vision call with strict structured output. One retry on timeout."""
     kwargs = dict(
         model=settings.openai_vision_model,
+        temperature=0,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": _user_content(bundle)},

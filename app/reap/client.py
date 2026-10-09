@@ -61,11 +61,11 @@ class ReapClient:
         except ValueError:
             return ReapError("UNKNOWN", resp.text[:200], resp.status_code)
         err = body.get("error", body) if isinstance(body, dict) else {}
-        return ReapError(
-            str(err.get("code", "UNKNOWN")),
-            str(err.get("message", ""))[:200],
-            resp.status_code,
-        )
+        msg = str(err.get("message", ""))
+        # Field paths and validation reasons help debugging; they contain no user data.
+        for d in (err.get("detail") or {}).get("errors", []):
+            msg += f" [{d.get('path')}: {d.get('message')}]"
+        return ReapError(str(err.get("code", "UNKNOWN")), msg[:300], resp.status_code)
 
     async def get(self, path: str) -> Any:
         return await self._request("GET", path)
@@ -77,8 +77,13 @@ class ReapClient:
 
     # ---- Agentic endpoints (paths from PLAN.md phase 1) ----
 
-    async def create_enrollment(self) -> Any:
-        return await self.post("/agentic/enrollments", {"type": "EXTERNAL"})
+    async def create_enrollment(self, owner_id: str) -> Any:
+        body = {
+            "source": "EXTERNAL",
+            "owner": {"type": "CLIENT_REFERENCE", "id": owner_id, "email": settings.demo_email},
+            "presentation": {"type": "REDIRECT", "returnUrl": settings.reap_return_url},
+        }
+        return await self.post("/agentic/enrollments", body)
 
     async def get_enrollment(self, enrollment_id: str) -> Any:
         return await self.get(f"/agentic/enrollments/{enrollment_id}")

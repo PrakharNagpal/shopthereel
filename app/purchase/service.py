@@ -42,7 +42,7 @@ async def ensure_enrollment(user_id: str) -> str | None:
         url = _enrollment_url(cur)
         if url:
             return url
-    enr = await c.create_enrollment()
+    enr = await c.create_enrollment(user_id)
     state.update_user(user_id, enrollment_id=enr.get("id"))
     # Hosted URL field name is unverified; check the first real response.
     url = _enrollment_url(enr)
@@ -132,7 +132,7 @@ async def create_quote(user_id: str, variant_id: str) -> QuoteSummary:
 # ---------- checkout ----------
 
 def _to_order(co: dict) -> OrderResult:
-    fa = co.get("finalAmount")
+    fa = co.get("finalAmount") or co.get("amount")  # POST returns amount, GET finalAmount
     return OrderResult(
         checkout_id=co["id"],
         status=co.get("status", "UNKNOWN"),
@@ -212,6 +212,6 @@ def friendly_error(e: ReapError) -> str:
         return "That item cannot be delivered right now. Try another one."
     if e.code == "OVER_BUDGET":
         return e.message
-    if e.code in ("STALE_QUOTE", "NOT_ENROLLED"):
+    if e.code in ("STALE_QUOTE", "NOT_ENROLLED", "ENROLLMENT_NOT_ACTIVE"):
         return "That offer is out of date. Tap Buy on the product again."
     return "Something went wrong talking to the store. Please try again in a moment."
