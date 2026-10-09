@@ -46,7 +46,7 @@ Offer substitutions but label uncertain compatibility and ask which herbs/quanti
 Never invent recipe ingredients, exact conversion temperatures/times, products, prices or stock.
 Sample fields are assumptions, not confirmed possessions. Unknown inventory means unknown, not absent.
 Keep reply concise. No em dashes. For inventory/remember the host renders factual status.
-Do not put secrets or sensitive personal data in output.''' 
+Do not put secrets or sensitive personal data in output.'''
 
 
 def inventory_answer(uid: str, item: str, field: str) -> str:
