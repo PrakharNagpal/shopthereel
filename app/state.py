@@ -1,0 +1,107 @@
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Iterator, Optional
+
+from app.config import settings
+
+USER_COLUMNS = (
+    "enrollment_id",
+    "budget_per_order",
+    "budget_currency",
+    "shipping_json",
+    "pending_product_id",
+    "pending_option_ids",
+    "pending_variant_id",
+    "pending_quote_id",
+    "pending_checkout_id",
+)
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    igsid TEXT PRIMARY KEY,
+    enrollment_id TEXT,
+    budget_per_order REAL,
+    budget_currency TEXT,
+    shipping_json TEXT,
+    pending_product_id TEXT,
+    pending_option_ids TEXT,
+    pending_variant_id TEXT,
+    pending_quote_id TEXT,
+    pending_checkout_id TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS recognitions (reel_id TEXT PRIMARY KEY, result_json TEXT);
+CREATE TABLE IF NOT EXISTS orders (
+    checkout_id TEXT PRIMARY KEY, igsid TEXT, order_id TEXT,
+    final_amount REAL, currency TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS seen_messages (mid TEXT PRIMARY KEY);
+"""
+
+
+@contextmanager
+def _db() -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(settings.db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def get_user(igsid: str) -> dict:
+    with _db() as c:
+        row = c.execute("SELECT * FROM users WHERE igsid=?", (igsid,)).fetchone()
+    return dict(row) if row else {"igsid": igsid}
+
+
+def update_user(igsid: str, **fields) -> None:
+    bad = set(fields) - set(USER_COLUMNS)
+    if bad:
+        raise ValueError(f"unknown user columns: {bad}")
+    with _db() as c:
+        c.execute("INSERT OR IGNORE INTO users (igsid) VALUES (?)", (igsid,))
+        if fields:
+            sets = ", ".join(f"{k}=?" for k in fields)
+            c.execute(
+                f"UPDATE users SET {sets}, updated_at=? WHERE igsid=?",
+                (*fields.values(), _now(), igsid),
+            )
+
+
+def get_recognition(reel_id: str) -> Optional[dict]:
+    with _db() as c:
+        row = c.execute(
+            "SELECT result_json FROM recognitions WHERE reel_id=?", (reel_id,)
+        ).fetchone()
+    return json.loads(row["result_json"]) if row else None
+
+
+def save_recognition(reel_id: str, result: dict) -> None:
+    with _db() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO recognitions VALUES (?, ?)", (reel_id, json.dumps(result))
+        )
+
+
+def save_order(checkout_id: str, igsid: str, order_id, amount, currency) -> None:
+    with _db() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO orders VALUES (?,?,?,?,?,?)",
+            (checkout_id, igsid, order_id, amount, currency, _now()),
+        )
+
+
+def first_time_seen(mid: str) -> bool:
+    """True the first time a message id is seen; False for webhook retries."""
+    with _db() as c:
+        cur = c.execute("INSERT OR IGNORE INTO seen_messages VALUES (?)", (mid,))
+        return cur.rowcount == 1

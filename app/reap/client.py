@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Any, Optional
 
@@ -41,7 +42,13 @@ class ReapClient:
         headers = dict(extra_headers or {})
         if idempotent:
             headers["Idempotency-Key"] = str(uuid.uuid4())
-        resp = await self._http.request(method, path, json=json, headers=headers)
+        for attempt in range(5):
+            resp = await self._http.request(method, path, json=json, headers=headers)
+            # Sandbox returns transient 502/503; same idempotency key makes retry safe.
+            if resp.status_code in (502, 503) and attempt < 4:
+                await asyncio.sleep(1.0 * (attempt + 1))
+                continue
+            break
         if resp.status_code >= 400:
             raise self._to_error(resp)
         return resp.json() if resp.content else {}

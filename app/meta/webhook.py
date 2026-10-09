@@ -33,10 +33,12 @@ async def verify(request: Request) -> str:
     raise HTTPException(status_code=403)
 
 
-def handle_payload(payload: dict) -> None:
-    # Phase 1: just log. Phase 2/3 replaces this with parse -> dm.router.
+async def handle_payload(payload: dict) -> None:
     # Raw body may contain user ids and message text; this is dev-only logging.
     log.info("webhook body: %s", json.dumps(payload))
+    from app.dm.router import handle_payload as route  # late import avoids a cycle
+
+    await route(payload)
 
 
 @router.post("/webhook")
