@@ -99,6 +99,20 @@ class InstagramChatTests(unittest.IsolatedAsyncioTestCase):
   await self.message(payload=self.choice('FRESH_CARD'))
   self.assertEqual(state.get_user(self.uid)['enrollment_id'],'enrollment-2')
   self.assertEqual(self.client.create_enrollment.await_count,2)
+ async def test_terminal_checkout_does_not_block_next_reel(self):
+  await self.quote();self.client.get_enrollment.return_value={'status':'ACTIVE'};state.update_user(self.uid,enrollment_id='enrollment-1')
+  await self.message('confirm')
+  self.client.get_checkout.return_value={'id':'checkout-1','status':'FAILED'}
+  await self.reel()
+  self.assertEqual(store.get(self.uid)['phase'],'products')
+  self.assertEqual(self.client.create_checkout.await_count,1)
+ async def test_pending_checkout_still_blocks_next_reel(self):
+  await self.quote();self.client.get_enrollment.return_value={'status':'ACTIVE'};state.update_user(self.uid,enrollment_id='enrollment-1')
+  await self.message('confirm')
+  self.client.get_checkout.return_value={'id':'checkout-1','status':'REQUIRES_ACTION'}
+  await self.reel()
+  self.assertEqual(store.get(self.uid)['phase'],'payment')
+  self.assertEqual(self.client.create_checkout.await_count,1)
  async def test_bad_attachment_cannot_fetch_internal_urls(self):
   from app.media.instagram import trusted_media
   for url in ('http://lookaside.fbsbx.com/ig_messaging_cdn/','https://127.0.0.1/','https://lookaside.fbsbx.com.evil.test/ig_messaging_cdn/','https://lookaside.fbsbx.com/other/'):

@@ -198,7 +198,10 @@ async def action(sender,s,name,args=None):
         spawn(watch_enrollment(sender,state.get_user(uid)['enrollment_id'],s['turn']))
     elif name=='STATUS':
         if not s.get('checkout'):await send.send_text(sender,'No checkout has started yet. Select a product and confirm its total.');return
-        await report(sender,await web.order(s['checkout'],uid))
+        order=await web.order(s['checkout'],uid)
+        if order['status'] in service.TERMINAL:
+            s['phase']='complete';store.save(uid,s)
+        await report(sender,order)
     elif name=='CANCEL':
         if s.get('phase')=='payment':await send.send_text(sender,'Checkout has already started. Reply status to check its result.');return
         store.save(uid,{'turn':uuid.uuid4().hex,'phase':'idle'});state.update_user(uid,pending_quote_id=None,pending_variant_id=None)
@@ -231,6 +234,17 @@ async def text(sender,message):
 
 
 
+async def payment_pending(sender):
+    uid=owner(sender);s=store.get(uid)
+    if s.get('phase')!='payment':return False
+    if not s.get('checkout'):return True
+    order=await web.order(s['checkout'],uid)
+    if order['status'] not in service.TERMINAL:return True
+    s['phase']='complete';store.save(uid,s)
+    if store.first_notice(s['checkout']):await report(sender,order)
+    return False
+
+
 async def handle_one(item):
     sender=str(item.get('sender',{}).get('id',''));uid=owner(sender)
     async with locks.setdefault(uid,asyncio.Lock()):
@@ -243,7 +257,7 @@ async def handle_one(item):
                 if c.get('uid')!=uid or c.get('turn')!=s.get('turn'):raise HTTPException(409,'That button belongs to an older conversation. Use the latest choices.')
                 await action(sender,s,c['action'],c.get('args'))
             elif message.get('attachments') or permalink(message):
-                if store.get(uid).get('phase')=='payment':
+                if await payment_pending(sender):
                     await send.send_text(sender,'Your checkout is in progress. Reply status, then send your next Reel.');return
                 await send.send_text(sender,'Looking at your Reel and checking merchants now…')
                 bundle=await from_message(message);result=await recognize_and_search(bundle,user_id=uid);await personal.enrich(sender,bundle,result)
