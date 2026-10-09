@@ -19,12 +19,12 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_sample_unknown_confirmed_and_absent_are_distinct(self):
-        self.assertIn('sample', conversation.inventory_answer('demo', 'salt', 'pantry'))
+    def test_unknown_confirmed_and_absent_are_distinct(self):
+        self.assertIn('do not know', conversation.inventory_answer('demo', 'salt', 'pantry'))
         self.assertIn('do not know', conversation.inventory_answer('demo', 'basil', 'pantry'))
         conversation.record_inventory('demo', 'basil', 'pantry', True)
         self.assertIn('lists basil', conversation.inventory_answer('demo', 'basil', 'pantry'))
-        self.assertIn('sample', conversation.inventory_answer('demo', 'salt', 'pantry'))
+        self.assertIn('do not know', conversation.inventory_answer('demo', 'salt', 'pantry'))
         self.assertIn('basil', conversation.inventory_answer('demo', 'herbs', 'pantry'))
         conversation.record_inventory('demo', 'basil', 'pantry', False)
         self.assertIn('do not currently have basil', conversation.inventory_answer('demo', 'basil', 'pantry'))

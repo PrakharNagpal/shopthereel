@@ -1,4 +1,4 @@
-"""Editable demo context, scoped to the configured Telegram demo chats."""
+"""Editable customer context, scoped to the configured Telegram chats."""
 import hashlib
 import json
 import re
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.config import settings
 
-SEED = Path(__file__).with_name("demo_profile.json")
+SEED = Path(__file__).with_name("default_profile.json")
 FIELDS = {"home", "not_owned", "pantry", "likes", "dislikes", "sizes", "background"}
 
 
@@ -15,7 +15,20 @@ def load_profile(user_id: str | None) -> dict:
     if not user_id or settings.front_door != "telegram" or user_id not in allowed:
         return {}
     path = _path(user_id)
-    return json.loads(path.read_text() if path.exists() else SEED.read_text())
+    return clean_profile(json.loads(path.read_text() if path.exists() else SEED.read_text()))
+
+
+def clean_profile(profile: dict) -> dict:
+    """Migrate old sample data without promoting it to real customer facts."""
+    for field in profile.get("sample_fields", []):
+        if field in ("home", "pantry"):
+            facts = profile.get("inventory_facts", {}).get(field, {})
+            profile[field] = [item for item in profile.get(field, []) if facts.get(item.casefold()) is True]
+        elif field in FIELDS:
+            profile[field] = {} if field == "sizes" else "" if field == "background" else []
+    profile["sample_fields"] = []
+    profile["label"] = "Shopper"
+    return profile
 
 
 def _path(user_id: str) -> Path:
@@ -60,18 +73,19 @@ def save_profile(user_id: str, profile: dict) -> None:
 def describe_profile(user_id: str) -> str:
     p = load_profile(user_id)
     if not p:
-        return "No demo profile is configured for this chat."
-    sample = set(p.get("sample_fields", []))
-    lines = ["Your demo profile", p["background"]]
+        return "No profile is configured for this chat."
+    lines = ["Your profile"]
+    if p.get("background"):
+        lines.append(p["background"])
     for field in ("home", "not_owned", "pantry", "likes", "dislikes", "sizes"):
         value = p[field]
         text = ", ".join(f"{k}={v}" for k, v in value.items()) if isinstance(value, dict) else ", ".join(value)
-        suffix = " (sample assumptions)" if field in sample else ""
+        suffix = ""
         lines.append(f"{field.replace('_', ' ').title()}{suffix}: {text or 'not provided'}")
     lines += ["", "Edit with: profile set home oven, blender",
               "Other fields: not_owned, pantry, likes, dislikes, sizes, background.",
               "For sizes, use key=value pairs. No size will be selected automatically.",
-              "Try: demo air fryer"]
+              "You can also say: I have basil, or ask: Do I have salt?"]
     return "\n".join(lines)
 
 

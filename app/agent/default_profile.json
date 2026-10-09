@@ -1,0 +1,11 @@
+{
+  "label": "Shopper",
+  "background": "",
+  "home": ["oven"],
+  "not_owned": ["air fryer"],
+  "pantry": [],
+  "likes": [],
+  "dislikes": [],
+  "sizes": {},
+  "sample_fields": []
+}

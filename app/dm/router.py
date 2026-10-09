@@ -4,6 +4,7 @@ import logging
 
 from app import state
 from app.config import settings
+from app.agent.commerce import chat as commerce_chat
 from app.agent.conversation import respond, remember_reel, read_context, write_context, record_inventory
 from app.agent.search import gather_candidates, recognize_and_search
 from app.agent.profile import describe_profile, excluded, load_profile, update_profile
@@ -74,9 +75,11 @@ async def process_reel(ev: InboundEvent, hint: str | None) -> None:
             raise ValueError("no reel url")
         bundle = await bundle_from_url(ev.reel_url, ev.reel_id or "unknown", ev.reel_title, hint)
         result = await recognize_and_search(bundle, user_id=ev.igsid)
-        await add_personal_advice(ev.igsid, bundle, result)
+        remember_reel(ev.igsid, bundle, result, {})
         await render.results(ev.igsid, result)
-        await offer_oven_option(ev.igsid)
+        await send_quick_replies(ev.igsid, "Want to compare alternatives or ask about this Reel?",
+                                [("Chat more", f"CHAT:{bundle.reel_id}")])
+        spawn(finish_personal_advice(ev.igsid, bundle, result))
     except Exception:
         log.exception("reel processing failed")
         await send_text(
@@ -86,6 +89,12 @@ async def process_reel(ev: InboundEvent, hint: str | None) -> None:
 
 async def handle_text(ev: InboundEvent) -> None:
     text = (ev.text or "").strip()
+    if text.lower() in ("chat more", "chat less"):
+        context = read_context(ev.igsid)
+        context["chat_more"] = text.lower() == "chat more"
+        write_context(ev.igsid, context)
+        await send_text(ev.igsid, "Ask me about alternatives, what you already own, or what this recipe needs." if context["chat_more"] else "Share a Reel any time for the closest product match.")
+        return
     if text.lower() == "profile":
         await send_text(ev.igsid, describe_profile(ev.igsid))
         return
@@ -99,7 +108,7 @@ async def handle_text(ev: InboundEvent) -> None:
         return
     if text.lower() == "demo air fryer":
         await send_text(ev.igsid, "Demo scene: air-fryer baked oats. Recognition is mocked; "
-                        "personal advice and catalog search are live. Checking your demo profile.")
+                        "personal advice and catalog search are live.")
         spawn(run_personal_demo(ev.igsid))
         return
     if text.lower() == "use my oven":
@@ -126,7 +135,7 @@ async def handle_text(ev: InboundEvent) -> None:
             detected=DetectedProduct(name=query, category="search", brand_source="none",
                                      attributes=[], queries=[query], best_frame=0, confidence=1),
             match_type="similar" if candidates else "none", candidates=candidates,
-            note="Catalog search results. Sandbox demo only.",
+            note="Catalog search results.",
         ))
         return
     if await rules_menu.handle_text(ev.igsid, text):
@@ -144,6 +153,13 @@ async def converse(uid: str, text: str) -> None:
     action = await respond(uid, text)
     if action.get("intent") == "remember":
         await send_quick_replies(uid, action["reply"], [("Yes, remember", f"INVENTORY:yes:{action['nonce']}"), ("Cancel", f"INVENTORY:no:{action['nonce']}")])
+    elif action.get("intent") in ("answer", "search") and read_context(uid).get("chat_more"):
+        result = await commerce_chat(uid, text)
+        await send_text(uid, result["reply"])
+        if result.get("cards"):
+            from app.messaging import send_cards
+            await send_cards(uid, result["cards"])
+        return
     else:
         await send_text(uid, action["reply"])
     if action.get("intent") == "search" and action.get("query"):
@@ -163,7 +179,15 @@ async def converse(uid: str, text: str) -> None:
 async def handle_payload_tap(ev: InboundEvent) -> None:
     kind, _, rest = (ev.payload or "").partition(":")
     uid = ev.igsid
-    if kind == "INVENTORY":
+    if kind == "CHAT":
+        context = read_context(uid)
+        if context.get("reel", {}).get("reel_id") != rest:
+            await send_text(uid, "That Reel has been replaced. Use the latest Chat more button.")
+            return
+        context["chat_more"] = True
+        write_context(uid, context)
+        await send_text(uid, "What would you like to know? You can ask for a cheaper alternative, compare products, or check what you already have.")
+    elif kind == "INVENTORY":
         context = read_context(uid)
         decision, _, nonce = rest.partition(":")
         pending = context.get("pending_inventory")
@@ -225,19 +249,28 @@ async def handle_payload_tap(ev: InboundEvent) -> None:
 
 async def add_personal_advice(uid: str, bundle, result) -> None:
     advice = await advise(bundle, result.detected, uid, result.candidates)
-    preferred = []
-    for index in advice.get("recommended_indices", []):
-        if isinstance(index, int) and 0 <= index < len(result.candidates) and index not in preferred:
-            preferred.append(index)
-    if preferred:
-        preferred += [i for i in range(len(result.candidates)) if i not in preferred]
-        result.candidates = [result.candidates[i] for i in preferred]
-        result.candidates[0].badge = "For your profile"
+    context = read_context(uid)
+    if context.get("reel") and context["reel"].get("reel_id") != bundle.reel_id:
+        return
     _personal_advice[uid] = {**advice, "reel_id": bundle.reel_id}
-    remember_reel(uid, bundle, result, advice)
-    sample_fields = load_profile(uid).get("sample_fields", [])
-    disclaimer = ("Demo assumptions: " + ", ".join(sample_fields) + ". Type 'profile' to review or edit.") if sample_fields and advice.get("note") else None
-    result.note = "\n\n".join(n for n in (result.note, disclaimer, advice.get("note")) if n) or None
+    if context.get("reel", {}).get("reel_id") == bundle.reel_id:
+        context["reel"]["advice"] = advice
+        write_context(uid, context)
+    result.note = "\n\n".join(n for n in (result.note, advice.get("note")) if n) or None
+
+
+async def finish_personal_advice(uid: str, bundle, result) -> None:
+    try:
+        original_note = result.note
+        await add_personal_advice(uid, bundle, result)
+        if read_context(uid).get("reel", {}).get("reel_id") != bundle.reel_id:
+            return
+        note = _personal_advice.get(uid, {}).get("note")
+        if note and note != original_note:
+            await send_text(uid, note.replace("—", ","))
+        await offer_oven_option(uid)
+    except Exception:
+        log.warning("Optional personal advice unavailable")
 
 
 async def offer_oven_option(uid: str) -> None:
@@ -248,9 +281,10 @@ async def offer_oven_option(uid: str) -> None:
 
 
 async def oven_alternative(uid: str, reel_id: str | None = None) -> None:
-    advice = _personal_advice.get(uid, {})
+    stored = read_context(uid).get("reel", {})
+    advice = {**stored.get("advice", {}), "reel_id": stored.get("reel_id")} if stored else _personal_advice.get(uid, {})
     if not advice.get("oven_alternative") or (reel_id and advice.get("reel_id") != reel_id):
-        await send_text(uid, "Send the recipe Reel again, or try 'demo air fryer', so I can adapt it.")
+        await send_text(uid, "Send the recipe Reel again so I can adapt it.")
         return
     await send_text(uid, advice["oven_alternative"])
     if advice.get("alternative_queries"):
@@ -260,7 +294,8 @@ async def oven_alternative(uid: str, reel_id: str | None = None) -> None:
 
 
 async def oven_shopping(uid: str, reel_id: str) -> None:
-    advice = _personal_advice.get(uid, {})
+    stored = read_context(uid).get("reel", {})
+    advice = {**stored.get("advice", {}), "reel_id": stored.get("reel_id")} if stored else _personal_advice.get(uid, {})
     if advice.get("reel_id") != reel_id:
         await send_text(uid, "Those suggestions have expired. Send the recipe again.")
         return
@@ -284,6 +319,7 @@ async def run_personal_demo(uid: str) -> None:
         candidates = [c for _, c in pooled if not excluded(c.name, load_profile(uid))][:8]
         result = RecognitionResult(detected=detected, match_type="similar" if candidates else "none",
                                    candidates=candidates, note="Demo recognition; live catalog results.")
+        remember_reel(uid, bundle, result, {})
         await add_personal_advice(uid, bundle, result)
         await render.results(uid, result)
         await offer_oven_option(uid)

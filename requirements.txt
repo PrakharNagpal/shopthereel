@@ -6,3 +6,7 @@ pydantic-settings
 openai
 python-dotenv
 yt-dlp
+
+# Anthropic commerce blueprint core, pinned source in third_party.
+./third_party/commerce-agents/commerce-common
+./third_party/commerce-agents/shopping-agent/core

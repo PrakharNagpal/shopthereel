@@ -31,20 +31,20 @@ class ProfileTests(unittest.TestCase):
 
 
 class FlowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_advisor_cannot_invent_catalog_items(self):
+    async def test_advice_cannot_replace_closest_match(self):
         bundle, detected = mock_air_fryer_scene()
         candidates = [ProductCandidate(product_id=str(i), name=f"Air fryer {i}", merchant="store", price_min=100, price_max=100, currency="SGD") for i in range(2)]
         result = RecognitionResult(detected=detected, match_type="similar", candidates=candidates)
         with patch.object(router, "advise", AsyncMock(return_value={"recommended_indices": [999, 1, 1, -1], "note": "Value pick"})), patch.dict(router._personal_advice, {}, clear=True):
             await router.add_personal_advice("demo", bundle, result)
-            self.assertEqual([c.product_id for c in result.candidates], ["1", "0"])
+            self.assertEqual([c.product_id for c in result.candidates], ["0", "1"])
 
-    async def test_cached_results_are_personalized_per_user(self):
+    async def test_closest_match_is_kept_even_when_owned(self):
         bundle, detected = mock_air_fryer_scene()
         candidate = ProductCandidate(product_id="one", name="Air fryer", merchant="store", price_min=100, price_max=100, currency="SGD")
         cached = {"detected": detected.model_dump(), "ranked": [{"c": candidate.model_dump(), "s": 0.9}], "first_query": {"one": 0}}
-        with patch("app.agent.search.state.get_recognition", return_value=cached), patch("app.agent.search.get_budget", return_value=None), patch("app.agent.search.load_profile", side_effect=lambda uid: {"home": ["air fryer"]} if uid == "owner" else {}):
-            self.assertEqual((await recognize_and_search(bundle, "owner")).candidates, [])
+        with patch("app.agent.search.state.get_recognition", return_value=cached), patch("app.agent.search.get_budget", return_value=None):
+            self.assertEqual(len((await recognize_and_search(bundle, "owner")).candidates), 1)
             self.assertEqual(len((await recognize_and_search(bundle, "other")).candidates), 1)
 
     async def test_advice_survives_no_catalog_results(self):

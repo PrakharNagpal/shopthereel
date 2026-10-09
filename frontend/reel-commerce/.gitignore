@@ -1,0 +1,8 @@
+node_modules
+incomplete-dependencies
+.next
+out
+
+.account-data/
+
+*.tsbuildinfo
