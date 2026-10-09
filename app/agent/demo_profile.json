@@ -1,0 +1,11 @@
+{
+  "label": "Demo shopper",
+  "background": "Sample background: a Singapore shopper who cooks at home and prefers useful purchases.",
+  "home": ["oven"],
+  "not_owned": ["air fryer"],
+  "pantry": ["olive oil", "salt", "black pepper"],
+  "likes": ["practical products", "value for money", "home cooking"],
+  "dislikes": ["duplicate appliances", "unnecessary upgrades"],
+  "sizes": {},
+  "sample_fields": ["background", "pantry", "likes", "dislikes"]
+}

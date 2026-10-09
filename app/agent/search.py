@@ -5,6 +5,7 @@ import re
 from app import state
 from app.agent.recognize import recognize
 from app.agent.rerank import rerank
+from app.agent.profile import excluded, load_profile
 from app.models import DetectedProduct, MediaBundle, ProductCandidate, RecognitionResult
 from app.purchase.budget import get_budget
 from app.purchase.service import client
@@ -132,6 +133,8 @@ async def recognize_and_search(bundle: MediaBundle, user_id: str | None = None) 
                 "first_query": first_query,
             })
 
+    profile = load_profile(user_id)
+    ranked = [(c, score) for c, score in ranked if not excluded(c.name, profile)]
     ranked, note = _apply_budget(ranked, get_budget(user_id) if user_id else None)
     ranked = ranked[:MAX_RESULTS]
     assign_badges(ranked)

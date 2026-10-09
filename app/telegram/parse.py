@@ -24,13 +24,16 @@ def parse_update(u: dict) -> Optional[InboundEvent]:
         )
 
     msg = u.get("message")
-    if not msg or not msg.get("text"):
+    if not msg:
         return None  # stickers, photos, joins, edits: ignore
     chat_id = msg["chat"]["id"]
     mid = f"{chat_id}-{msg['message_id']}"
-    text = msg["text"].strip()
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+    links = [e["url"] for e in (msg.get("entities", []) + msg.get("caption_entities", [])) if e.get("type") == "text_link" and e.get("url")]
+    if not text and not links:
+        return None
 
-    m = IG_LINK.search(text)
+    m = IG_LINK.search(text) or next((match for link in links if (match := IG_LINK.search(link))), None)
     if m:
         rest = IG_LINK.sub("", text).strip() or None
         return InboundEvent(

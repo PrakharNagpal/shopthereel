@@ -63,14 +63,14 @@ async def ensure_enrollment(user_id: str) -> str | None:
     if await enrollment_state(user_id) == "ACTIVE":
         return None
     enr = await client().create_enrollment(user_id)
-    state.update_user(
-        user_id, enrollment_id=enr.get("id"),
-        enrollment_link_sent_at=datetime.now(timezone.utc).isoformat(),
-    )
     url = _enrollment_url(enr)
-    if not url:
+    if not enr.get("id") or not url:
         log.error("enrollment response had no URL; keys=%s", list(enr))
         raise ReapError("NO_ENROLLMENT_URL", "no hosted URL in enrollment response", 0)
+    state.update_user(
+        user_id, enrollment_id=enr["id"],
+        enrollment_link_sent_at=datetime.now(timezone.utc).isoformat(),
+    )
     return url
 
 
@@ -247,7 +247,7 @@ async def suggest_after_order(igsid: str) -> None:
         if budget:
             caps.append(budget[0])
         cands = await suggest_addons(
-            name, u.get("pending_product_id"), min(caps) if caps else None
+            name, u.get("pending_product_id"), min(caps) if caps else None, user_id=igsid
         )
         if not cands:
             return

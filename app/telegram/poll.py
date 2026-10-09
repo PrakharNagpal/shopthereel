@@ -65,6 +65,9 @@ async def handle_update(u: dict) -> None:
 
 async def run() -> None:
     me = await call("getMe")
+    webhook = await call("getWebhookInfo")
+    if webhook.get("url"):
+        raise TelegramError("This bot has an active webhook. It was left unchanged.")
     log.info("telegram bot @%s is polling", me.get("username"))
     offset = None
     while True:

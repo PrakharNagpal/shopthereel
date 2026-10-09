@@ -3,6 +3,9 @@ from app.models import QuoteSummary, RecognitionResult
 
 HELP = (
     "Share an Instagram reel with me and I will find the product for you.\n"
+    "For a quick sandbox test, type 'search Sony WH-1000XM5'.\n"
+    "Type 'profile' to see your demo preferences, or 'demo air fryer' for personalized cooking advice.\n"
+    "Ask 'Do I have salt?', tell me 'I have basil', or ask about the latest recipe.\n"
     "Type 'settings' to set your spending rules: per-order and monthly limits, "
     "orders per day, an extra check for big orders, or pause buying."
 )
@@ -12,6 +15,7 @@ async def results(igsid: str, result: RecognitionResult) -> None:
     if result.match_type == "none" or not result.candidates:
         await send_text(
             igsid,
+            ((result.note + "\n\n") if result.note else "") +
             "I couldn't find this in our stores. Try sending a clearer reel "
             "or tell me what you're after.",
         )
