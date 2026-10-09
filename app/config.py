@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     meta_verify_token: str = ""
     graph_api_version: str = ""
 
+    front_door: str = "instagram"          # "telegram" or "instagram"
+    telegram_bot_token: str = ""
+    telegram_allowed_chat_ids: str = ""    # comma separated; empty means anyone can use the bot
+    demo_enrollment_id: str = ""           # ACTIVE enrollment reused for every user in the demo
+
     public_base_url: str = ""
     db_path: str = "./shopthereel.db"
 

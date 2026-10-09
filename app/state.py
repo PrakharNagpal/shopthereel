@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS orders (
     final_amount REAL, currency TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS seen_messages (mid TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS callbacks (id TEXT PRIMARY KEY, payload TEXT);
 """
 
 
@@ -154,3 +155,19 @@ def orders_today(igsid: str) -> int:
             "SELECT COUNT(*) FROM orders WHERE igsid=? AND created_at>=?", (igsid, start)
         ).fetchone()
     return int(row[0])
+
+
+def put_callback(payload: str) -> str:
+    """Telegram callback_data is capped at 64 bytes, our payloads are longer: store, send an id."""
+    import hashlib
+
+    cid = hashlib.sha1(payload.encode()).hexdigest()[:16]
+    with _db() as c:
+        c.execute("INSERT OR IGNORE INTO callbacks VALUES (?, ?)", (cid, payload))
+    return cid
+
+
+def get_callback(cid: str) -> Optional[str]:
+    with _db() as c:
+        row = c.execute("SELECT payload FROM callbacks WHERE id=?", (cid,)).fetchone()
+    return row["payload"] if row else None

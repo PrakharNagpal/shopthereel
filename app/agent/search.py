@@ -75,6 +75,7 @@ async def gather_candidates(queries: list[str]) -> list[tuple[int, ProductCandid
         for i, r in zip(failed, again):
             results[i] = r
     pooled: dict[str, tuple[int, ProductCandidate]] = {}
+    seen_listings: set[tuple[str, str, float]] = set()  # the catalog sometimes lists a product twice
     for i, res in enumerate(results):
         if isinstance(res, Exception):
             log.warning("query %d failed: %s", i, res)
@@ -82,7 +83,12 @@ async def gather_candidates(queries: list[str]) -> list[tuple[int, ProductCandid
         for p in res.get("products", []):
             if not p.get("available", True) or p["id"] in pooled:
                 continue
-            pooled[p["id"]] = (i, _to_candidate(p))
+            cand = _to_candidate(p)
+            listing = (cand.name.lower(), cand.merchant.lower(), cand.price_min)
+            if listing in seen_listings:
+                continue
+            seen_listings.add(listing)
+            pooled[p["id"]] = (i, cand)
     return list(pooled.values())
 
 

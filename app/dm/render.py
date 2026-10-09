@@ -1,4 +1,4 @@
-from app.meta.send import send_carousel, send_quick_replies, send_text
+from app.messaging import send_carousel, send_quick_replies, send_text
 from app.models import QuoteSummary, RecognitionResult
 
 HELP = (

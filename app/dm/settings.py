@@ -3,7 +3,7 @@ import re
 from typing import Optional
 
 from app import state
-from app.meta.send import send_quick_replies, send_text
+from app.messaging import send_quick_replies, send_text
 from app.purchase import policy
 from app.purchase.policy import RULES
 

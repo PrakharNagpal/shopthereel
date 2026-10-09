@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import sys
 from pathlib import Path
 
 import httpx
@@ -40,7 +41,8 @@ async def _direct(url: str, out: Path) -> None:
 
 async def _ytdlp(url: str, out: Path) -> None:
     proc = await asyncio.create_subprocess_exec(
-        "yt-dlp", "--max-filesize", "50M", "-o", str(out), "-f", "mp4/best", url,
+        sys.executable, "-m", "yt_dlp", "--max-filesize", "50M", "--write-info-json",
+        "-o", str(out), "-f", "mp4/best", "--no-playlist", url,
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
     try:

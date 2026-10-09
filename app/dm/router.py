@@ -8,7 +8,7 @@ from app.dm import render
 from app.dm import settings as rules_menu
 from app.media.pipeline import bundle_from_url
 from app.meta.parse import InboundEvent, parse_events
-from app.meta.send import send_quick_replies, send_text, send_url_button
+from app.messaging import send_quick_replies, send_text, send_url_button
 from app.purchase import policy, service
 from app.purchase.budget import handle_budget_command
 from app.reap.client import ReapError
@@ -26,7 +26,12 @@ def spawn(coro) -> None:
 
 
 async def handle_payload(body: dict) -> None:
-    for ev in parse_events(body):
+    """Instagram webhook body."""
+    await handle_events(parse_events(body))
+
+
+async def handle_events(events: list[InboundEvent]) -> None:
+    for ev in events:
         if ev.mid and not state.first_time_seen(ev.mid):
             continue  # webhook retry
         try:

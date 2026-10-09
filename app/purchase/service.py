@@ -34,6 +34,9 @@ def _money(v) -> float:
 async def ensure_enrollment(user_id: str) -> str | None:
     """Returns hosted card-entry URL if user not enrolled, else None."""
     c = client()
+    if settings.demo_enrollment_id:  # demo mode: everyone buys with the pre-enrolled card
+        state.update_user(user_id, enrollment_id=settings.demo_enrollment_id)
+        return None
     eid = state.get_user(user_id).get("enrollment_id")
     if eid:
         cur = await c.get_enrollment(eid)
@@ -177,7 +180,7 @@ async def poll_checkout(checkout_id: str) -> OrderResult:
 
 async def watch_checkout(igsid: str, checkout_id: str, timeout_s: int = 120) -> None:
     """Background poller: DMs the outcome. Run with asyncio.create_task / BackgroundTasks."""
-    from app.meta.send import send_text
+    from app.messaging import send_text
 
     waited = 0
     while waited < timeout_s:
@@ -212,7 +215,7 @@ async def suggest_after_order(igsid: str) -> None:
     """Offer add-ons after a completed order. Best effort: never raises."""
     try:
         from app.agent.recommend import suggest_addons
-        from app.meta.send import send_cards, send_quick_replies
+        from app.messaging import send_cards, send_quick_replies
         from app.purchase.budget import get_budget
 
         u = state.get_user(igsid)
@@ -237,7 +240,7 @@ async def suggest_after_order(igsid: str) -> None:
 
 
 async def send_text_safe(igsid: str, text: str) -> None:
-    from app.meta.send import send_text
+    from app.messaging import send_text
 
     await send_text(igsid, text)
 
